@@ -14,7 +14,7 @@ Future<File> applyPolarizationEffect(
   img.Image? image = img.decodeImage(bytes);
   if (image == null) return inputFile;
 
-  // Apply polarization effect
+  // Apply polarization effect first
   for (int y = 0; y < image.height; y++) {
     for (int x = 0; x < image.width; x++) {
       final pixel = image.getPixel(x, y);
@@ -45,29 +45,176 @@ Future<File> applyPolarizationEffect(
     }
   }
 
-  // Add white rectangular frame
-  final int frameThickness = 40; // Frame border thickness
-  final int bottomExtraSpace = 120; // Extra space at bottom for polaroid effect
+  // Resize image to be smaller - reduced width and height (65% of original)
+  final int smallerWidth = (image.width * 0.65).toInt();
+  final int smallerHeight = (image.height * 0.45).toInt(); // Even smaller height
+  final img.Image resizedImage = img.copyResize(
+    image,
+    width: smallerWidth,
+    height: smallerHeight,
+    interpolation: img.Interpolation.linear,
+  );
+
+  // Modern Polaroid frame dimensions
+  final int topBorder = 70;        // Top white border
+  final int sideBorder = 70;       // Left and right white borders
+  final int bottomBorder = 200;    // Large bottom border
+  final int cornerRadius = 35;     // Rounded corners
+  final int outerMargin = 50;      // Margin around the entire frame
   
-  // Create new image with frame
-  final int newWidth = image.width + (frameThickness * 2);
-  final int newHeight = image.height + (frameThickness * 2) + bottomExtraSpace;
+  // Calculate frame dimensions (without outer margin)
+  final int frameWidth = resizedImage.width + (sideBorder * 2);
+  final int frameHeight = resizedImage.height + topBorder + bottomBorder;
+  
+  // Create new image with frame + outer margin
+  final int totalWidth = frameWidth + (outerMargin * 2);
+  final int totalHeight = frameHeight + (outerMargin * 2);
   
   final img.Image framedImage = img.Image(
-    width: newWidth,
-    height: newHeight,
+    width: totalWidth,
+    height: totalHeight,
   );
   
-  // Fill with white background
-  img.fill(framedImage, color: img.ColorRgb8(255, 255, 255));
+  // Fill entire image with black background (for outer margin)
+  img.fill(framedImage, color: img.ColorRgb8(0, 0, 0));
+  
+  // Fill the frame area with white
+  for (int y = outerMargin; y < outerMargin + frameHeight; y++) {
+    for (int x = outerMargin; x < outerMargin + frameWidth; x++) {
+      framedImage.setPixel(x, y, img.ColorRgb8(255, 255, 255));
+    }
+  }
+  
+  // Apply rounded corners to the white frame
+  for (int y = outerMargin; y < outerMargin + frameHeight; y++) {
+    for (int x = outerMargin; x < outerMargin + frameWidth; x++) {
+      bool isCorner = false;
+      int dx = 0, dy = 0;
+      
+      // Calculate position relative to frame
+      final int frameX = x - outerMargin;
+      final int frameY = y - outerMargin;
+      
+      // Top-left corner
+      if (frameX < cornerRadius && frameY < cornerRadius) {
+        dx = cornerRadius - frameX;
+        dy = cornerRadius - frameY;
+        isCorner = true;
+      }
+      // Top-right corner
+      else if (frameX >= frameWidth - cornerRadius && frameY < cornerRadius) {
+        dx = frameX - (frameWidth - cornerRadius - 1);
+        dy = cornerRadius - frameY;
+        isCorner = true;
+      }
+      // Bottom-left corner
+      else if (frameX < cornerRadius && frameY >= frameHeight - cornerRadius) {
+        dx = cornerRadius - frameX;
+        dy = frameY - (frameHeight - cornerRadius - 1);
+        isCorner = true;
+      }
+      // Bottom-right corner
+      else if (frameX >= frameWidth - cornerRadius && frameY >= frameHeight - cornerRadius) {
+        dx = frameX - (frameWidth - cornerRadius - 1);
+        dy = frameY - (frameHeight - cornerRadius - 1);
+        isCorner = true;
+      }
+      
+      // If in corner area, check if outside radius
+      if (isCorner) {
+        final int distance = (dx * dx + dy * dy);
+        if (distance > cornerRadius * cornerRadius) {
+          // Make black (part of outer margin)
+          framedImage.setPixel(x, y, img.ColorRgb8(0, 0, 0));
+        }
+      }
+    }
+  }
+  
+  // Calculate photo position (accounting for outer margin)
+  final int photoTop = outerMargin + topBorder;
+  final int photoLeft = outerMargin + sideBorder;
+  final int photoWidth = resizedImage.width;
+  final int photoHeight = resizedImage.height;
+  
+  // Add subtle shadow/depth to the inner photo area
+  final int shadowSize = 3;
+  for (int i = 0; i < shadowSize; i++) {
+    final int shadowAlpha = (150 * (shadowSize - i) / shadowSize).toInt();
+    
+    // Top shadow
+    for (int x = photoLeft; x < photoLeft + photoWidth; x++) {
+      framedImage.setPixel(
+        x,
+        photoTop + i,
+        img.ColorRgb8(shadowAlpha, shadowAlpha, shadowAlpha),
+      );
+    }
+    
+    // Left shadow
+    for (int y = photoTop; y < photoTop + photoHeight; y++) {
+      framedImage.setPixel(
+        photoLeft + i,
+        y,
+        img.ColorRgb8(shadowAlpha, shadowAlpha, shadowAlpha),
+      );
+    }
+    
+    // Right shadow
+    for (int y = photoTop; y < photoTop + photoHeight; y++) {
+      framedImage.setPixel(
+        photoLeft + photoWidth - 1 - i,
+        y,
+        img.ColorRgb8(shadowAlpha, shadowAlpha, shadowAlpha),
+      );
+    }
+    
+    // Bottom shadow
+    for (int x = photoLeft; x < photoLeft + photoWidth; x++) {
+      framedImage.setPixel(
+        x,
+        photoTop + photoHeight - 1 - i,
+        img.ColorRgb8(shadowAlpha, shadowAlpha, shadowAlpha),
+      );
+    }
+  }
   
   // Copy the polarized image onto the white background
   img.compositeImage(
     framedImage,
-    image,
-    dstX: frameThickness,
-    dstY: frameThickness,
+    resizedImage,
+    dstX: photoLeft,
+    dstY: photoTop,
   );
+  
+  // Add a subtle dark border around the photo
+  final int borderThickness = 2;
+  for (int i = 0; i < borderThickness; i++) {
+    // Top border
+    for (int x = photoLeft - i; x < photoLeft + photoWidth + i; x++) {
+      if (x >= 0 && x < totalWidth) {
+        framedImage.setPixel(x, photoTop - 1 - i, img.ColorRgb8(180, 180, 180));
+      }
+    }
+    // Bottom border
+    for (int x = photoLeft - i; x < photoLeft + photoWidth + i; x++) {
+      if (x >= 0 && x < totalWidth) {
+        framedImage.setPixel(x, photoTop + photoHeight + i, img.ColorRgb8(180, 180, 180));
+      }
+    }
+    // Left border
+    for (int y = photoTop - i; y < photoTop + photoHeight + i; y++) {
+      if (y >= 0 && y < totalHeight) {
+        framedImage.setPixel(photoLeft - 1 - i, y, img.ColorRgb8(180, 180, 180));
+      }
+    }
+    // Right border
+    for (int y = photoTop - i; y < photoTop + photoHeight + i; y++) {
+      if (y >= 0 && y < totalHeight) {
+        framedImage.setPixel(photoLeft + photoWidth + i, y, img.ColorRgb8(180, 180, 180));
+      }
+    }
+  }
 
   final polarizedFile = File(
     inputFile.path.replaceFirst('.jpg', '_polarized.jpg'),
@@ -252,13 +399,6 @@ class _CameraScreenState extends State<CameraScreen> {
           // Camera Preview
           Positioned.fill(
             child: CameraPreview(_controller!),
-          ),
-
-          // Frame Overlay Preview
-          Positioned.fill(
-            child: CustomPaint(
-              painter: FrameOverlayPainter(),
-            ),
           ),
 
           // Top Bar with Gallery Icon
@@ -535,107 +675,6 @@ class GalleryScreen extends StatelessWidget {
             ),
     );
   }
-}
-
-// Frame overlay painter to show the white frame preview on camera
-class FrameOverlayPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3.0;
-
-    // Calculate frame dimensions
-    final double frameMargin = 30;
-    final double frameWidth = size.width - (frameMargin * 2);
-    final double aspectRatio = 3 / 4; // Standard photo aspect ratio
-    final double frameHeight = frameWidth * aspectRatio;
-    
-    // Extra space at bottom for polaroid effect
-    final double bottomExtraSpace = frameHeight * 0.15;
-    final double totalFrameHeight = frameHeight + bottomExtraSpace;
-    
-    // Center the frame vertically
-    final double frameTop = (size.height - totalFrameHeight) / 2;
-    final double frameLeft = frameMargin;
-
-    // Draw outer rectangle (complete frame with bottom space)
-    final outerRect = Rect.fromLTWH(
-      frameLeft,
-      frameTop,
-      frameWidth,
-      totalFrameHeight,
-    );
-    canvas.drawRect(outerRect, paint);
-
-    // Draw inner line separating photo area from bottom white space
-    final double separatorY = frameTop + frameHeight;
-    canvas.drawLine(
-      Offset(frameLeft, separatorY),
-      Offset(frameLeft + frameWidth, separatorY),
-      paint..strokeWidth = 1.5,
-    );
-
-    // Add corner decorations
-    final cornerPaint = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 5.0;
-
-    final double cornerLength = 20;
-
-    // Top-left corner
-    canvas.drawLine(
-      Offset(frameLeft - 5, frameTop),
-      Offset(frameLeft + cornerLength, frameTop),
-      cornerPaint,
-    );
-    canvas.drawLine(
-      Offset(frameLeft, frameTop - 5),
-      Offset(frameLeft, frameTop + cornerLength),
-      cornerPaint,
-    );
-
-    // Top-right corner
-    canvas.drawLine(
-      Offset(frameLeft + frameWidth - cornerLength, frameTop),
-      Offset(frameLeft + frameWidth + 5, frameTop),
-      cornerPaint,
-    );
-    canvas.drawLine(
-      Offset(frameLeft + frameWidth, frameTop - 5),
-      Offset(frameLeft + frameWidth, frameTop + cornerLength),
-      cornerPaint,
-    );
-
-    // Bottom-left corner
-    canvas.drawLine(
-      Offset(frameLeft - 5, frameTop + totalFrameHeight),
-      Offset(frameLeft + cornerLength, frameTop + totalFrameHeight),
-      cornerPaint,
-    );
-    canvas.drawLine(
-      Offset(frameLeft, frameTop + totalFrameHeight - cornerLength),
-      Offset(frameLeft, frameTop + totalFrameHeight + 5),
-      cornerPaint,
-    );
-
-    // Bottom-right corner
-    canvas.drawLine(
-      Offset(frameLeft + frameWidth - cornerLength, frameTop + totalFrameHeight),
-      Offset(frameLeft + frameWidth + 5, frameTop + totalFrameHeight),
-      cornerPaint,
-    );
-    canvas.drawLine(
-      Offset(frameLeft + frameWidth, frameTop + totalFrameHeight - cornerLength),
-      Offset(frameLeft + frameWidth, frameTop + totalFrameHeight + 5),
-      cornerPaint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class FullPreviewScreen extends StatefulWidget {
