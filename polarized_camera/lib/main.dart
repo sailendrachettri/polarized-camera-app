@@ -14,6 +14,7 @@ Future<File> applyPolarizationEffect(
   img.Image? image = img.decodeImage(bytes);
   if (image == null) return inputFile;
 
+  // Apply polarization effect
   for (int y = 0; y < image.height; y++) {
     for (int x = 0; x < image.width; x++) {
       final pixel = image.getPixel(x, y);
@@ -44,11 +45,35 @@ Future<File> applyPolarizationEffect(
     }
   }
 
+  // Add white rectangular frame
+  final int frameThickness = 40; // Frame border thickness
+  final int bottomExtraSpace = 120; // Extra space at bottom for polaroid effect
+  
+  // Create new image with frame
+  final int newWidth = image.width + (frameThickness * 2);
+  final int newHeight = image.height + (frameThickness * 2) + bottomExtraSpace;
+  
+  final img.Image framedImage = img.Image(
+    width: newWidth,
+    height: newHeight,
+  );
+  
+  // Fill with white background
+  img.fill(framedImage, color: img.ColorRgb8(255, 255, 255));
+  
+  // Copy the polarized image onto the white background
+  img.compositeImage(
+    framedImage,
+    image,
+    dstX: frameThickness,
+    dstY: frameThickness,
+  );
+
   final polarizedFile = File(
     inputFile.path.replaceFirst('.jpg', '_polarized.jpg'),
   );
   await polarizedFile.writeAsBytes(
-    img.encodeJpg(image, quality: 95),
+    img.encodeJpg(framedImage, quality: 95),
   );
   return polarizedFile;
 }
@@ -227,6 +252,13 @@ class _CameraScreenState extends State<CameraScreen> {
           // Camera Preview
           Positioned.fill(
             child: CameraPreview(_controller!),
+          ),
+
+          // Frame Overlay Preview
+          Positioned.fill(
+            child: CustomPaint(
+              painter: FrameOverlayPainter(),
+            ),
           ),
 
           // Top Bar with Gallery Icon
@@ -503,6 +535,107 @@ class GalleryScreen extends StatelessWidget {
             ),
     );
   }
+}
+
+// Frame overlay painter to show the white frame preview on camera
+class FrameOverlayPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.0;
+
+    // Calculate frame dimensions
+    final double frameMargin = 30;
+    final double frameWidth = size.width - (frameMargin * 2);
+    final double aspectRatio = 3 / 4; // Standard photo aspect ratio
+    final double frameHeight = frameWidth * aspectRatio;
+    
+    // Extra space at bottom for polaroid effect
+    final double bottomExtraSpace = frameHeight * 0.15;
+    final double totalFrameHeight = frameHeight + bottomExtraSpace;
+    
+    // Center the frame vertically
+    final double frameTop = (size.height - totalFrameHeight) / 2;
+    final double frameLeft = frameMargin;
+
+    // Draw outer rectangle (complete frame with bottom space)
+    final outerRect = Rect.fromLTWH(
+      frameLeft,
+      frameTop,
+      frameWidth,
+      totalFrameHeight,
+    );
+    canvas.drawRect(outerRect, paint);
+
+    // Draw inner line separating photo area from bottom white space
+    final double separatorY = frameTop + frameHeight;
+    canvas.drawLine(
+      Offset(frameLeft, separatorY),
+      Offset(frameLeft + frameWidth, separatorY),
+      paint..strokeWidth = 1.5,
+    );
+
+    // Add corner decorations
+    final cornerPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 5.0;
+
+    final double cornerLength = 20;
+
+    // Top-left corner
+    canvas.drawLine(
+      Offset(frameLeft - 5, frameTop),
+      Offset(frameLeft + cornerLength, frameTop),
+      cornerPaint,
+    );
+    canvas.drawLine(
+      Offset(frameLeft, frameTop - 5),
+      Offset(frameLeft, frameTop + cornerLength),
+      cornerPaint,
+    );
+
+    // Top-right corner
+    canvas.drawLine(
+      Offset(frameLeft + frameWidth - cornerLength, frameTop),
+      Offset(frameLeft + frameWidth + 5, frameTop),
+      cornerPaint,
+    );
+    canvas.drawLine(
+      Offset(frameLeft + frameWidth, frameTop - 5),
+      Offset(frameLeft + frameWidth, frameTop + cornerLength),
+      cornerPaint,
+    );
+
+    // Bottom-left corner
+    canvas.drawLine(
+      Offset(frameLeft - 5, frameTop + totalFrameHeight),
+      Offset(frameLeft + cornerLength, frameTop + totalFrameHeight),
+      cornerPaint,
+    );
+    canvas.drawLine(
+      Offset(frameLeft, frameTop + totalFrameHeight - cornerLength),
+      Offset(frameLeft, frameTop + totalFrameHeight + 5),
+      cornerPaint,
+    );
+
+    // Bottom-right corner
+    canvas.drawLine(
+      Offset(frameLeft + frameWidth - cornerLength, frameTop + totalFrameHeight),
+      Offset(frameLeft + frameWidth + 5, frameTop + totalFrameHeight),
+      cornerPaint,
+    );
+    canvas.drawLine(
+      Offset(frameLeft + frameWidth, frameTop + totalFrameHeight - cornerLength),
+      Offset(frameLeft + frameWidth, frameTop + totalFrameHeight + 5),
+      cornerPaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class FullPreviewScreen extends StatefulWidget {
