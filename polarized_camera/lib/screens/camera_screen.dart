@@ -57,7 +57,7 @@ class _CameraScreenState extends State<CameraScreen> {
 
       // Use low resolution for front camera, high for back
       final preset = _currentLens == CameraLensDirection.front
-          ? ResolutionPreset.low
+          ? ResolutionPreset.high
           : ResolutionPreset.high;
 
       _controller = CameraController(
