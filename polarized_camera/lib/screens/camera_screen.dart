@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:path/path.dart' as path;
@@ -18,50 +19,112 @@ class _CameraScreenState extends State<CameraScreen> {
   CameraController? _controller;
   bool _initialized = false;
   bool _capturing = false;
+  CameraLensDirection _currentLens = CameraLensDirection.back;
   final List<File> _photos = [];
 
   @override
   void initState() {
     super.initState();
     _loadExistingPhotos();
-    if (cameras.isEmpty) {
-      debugPrint('No cameras found');
-      return;
-    }
-    _controller = CameraController(
-      cameras.first,
-      ResolutionPreset.high,
-      enableAudio: false,
-    );
-    _controller!
-        .initialize()
-        .then((_) {
-          if (!mounted) return;
-          setState(() => _initialized = true);
-        })
-        .catchError((e) {
-          debugPrint('Camera init error: $e');
-        });
+    _initCamera();
   }
 
+  /// Get camera safely by lens direction
+  CameraDescription? _getCamera(CameraLensDirection direction) {
+    try {
+      return cameras.firstWhere((cam) => cam.lensDirection == direction);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Initialize camera with safe resolution & format
+  Future<void> _initCamera() async {
+    final camera = _getCamera(_currentLens);
+    if (camera == null) {
+      debugPrint('Camera not available: $_currentLens');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Camera $_currentLens not available')),
+        );
+      }
+      return;
+    }
+
+    try {
+      // Dispose old controller safely
+      await _controller?.dispose();
+
+      // Use low resolution for front camera, high for back
+      final preset = _currentLens == CameraLensDirection.front
+          ? ResolutionPreset.low
+          : ResolutionPreset.high;
+
+      _controller = CameraController(
+        camera,
+        preset,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+
+      await _controller!.initialize();
+
+      if (!mounted) return;
+      setState(() => _initialized = true);
+    } catch (e) {
+      debugPrint('Camera init failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to open camera')),
+        );
+      }
+    }
+  }
+
+  /// Switch front/back camera safely
+  Future<void> _switchCamera() async {
+    if (_capturing) return;
+
+    final newLens = _currentLens == CameraLensDirection.back
+        ? CameraLensDirection.front
+        : CameraLensDirection.back;
+
+    // Check if camera exists
+    if (_getCamera(newLens) == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This camera is not available')),
+      );
+      return;
+    }
+
+    setState(() {
+      _initialized = false;
+      _currentLens = newLens;
+    });
+
+    // Small delay to ensure controller disposal
+    await Future.delayed(const Duration(milliseconds: 200));
+    await _initCamera();
+  }
+
+  /// Load previously captured polarized photos
   Future<void> _loadExistingPhotos() async {
-    final Directory picturesDir = Directory(
-      '/storage/emulated/0/Pictures/PolarizedCamera',
-    );
+    final Directory picturesDir =
+        Directory('/storage/emulated/0/Pictures/PolarizedCamera');
+
     if (await picturesDir.exists()) {
-      final List<FileSystemEntity> files = picturesDir.listSync();
-      final List<File> imageFiles = files
+      final files = picturesDir
+          .listSync()
           .whereType<File>()
           .where((f) => f.path.endsWith('_polarized.jpg'))
           .toList();
-      
-      // Sort by modification time (newest first)
-      imageFiles.sort((a, b) => 
-        b.lastModifiedSync().compareTo(a.lastModifiedSync())
+
+      files.sort(
+        (a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()),
       );
-      
+
       setState(() {
-        _photos.addAll(imageFiles);
+        _photos.addAll(files);
       });
     }
   }
@@ -72,6 +135,7 @@ class _CameraScreenState extends State<CameraScreen> {
     super.dispose();
   }
 
+  /// Take picture and apply polarization effect
   Future<void> _takePicture() async {
     if (_capturing || !_initialized || _controller == null) return;
 
@@ -79,31 +143,27 @@ class _CameraScreenState extends State<CameraScreen> {
 
     try {
       final XFile picture = await _controller!.takePicture();
-      final Directory picturesDir = Directory(
-        '/storage/emulated/0/Pictures/PolarizedCamera',
-      );
+
+      final Directory picturesDir =
+          Directory('/storage/emulated/0/Pictures/PolarizedCamera');
       if (!await picturesDir.exists()) {
         await picturesDir.create(recursive: true);
       }
 
       final String newPath = path.join(
         picturesDir.path,
-        '${DateTime.now().millisecondsSinceEpoch}.jpg',
+        '${DateTime.now().millisecondsSinceEpoch}_polarized.jpg',
       );
 
       final File rawImage = await File(picture.path).copy(newPath);
 
-      // Apply polarization
-      final File polarizedImage = await PolarizationEffect.applyEffect(
-        rawImage,
-        intensity: 0.7,
-      );
+      final File polarizedImage =
+          await PolarizationEffect.applyEffect(rawImage, intensity: 0.7);
 
       setState(() {
         _photos.insert(0, polarizedImage);
       });
 
-      // Show success feedback
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -117,10 +177,7 @@ class _CameraScreenState extends State<CameraScreen> {
       debugPrint('Capture error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('Capture failed: $e')),
         );
       }
     } finally {
@@ -131,9 +188,7 @@ class _CameraScreenState extends State<CameraScreen> {
   void _openGallery() {
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => GalleryScreen(photos: _photos),
-      ),
+      MaterialPageRoute(builder: (_) => GalleryScreen(photos: _photos)),
     );
   }
 
@@ -150,12 +205,18 @@ class _CameraScreenState extends State<CameraScreen> {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Camera Preview
+          // Camera Preview with front camera mirroring
           Positioned.fill(
-            child: CameraPreview(_controller!),
+            child: Transform(
+              alignment: Alignment.center,
+              transform: _currentLens == CameraLensDirection.front
+                  ? Matrix4.rotationY(math.pi)
+                  : Matrix4.identity(),
+              child: CameraPreview(_controller!),
+            ),
           ),
 
-          // Top Bar with Gallery Icon
+          // Gallery Icon
           Positioned(
             top: 50,
             right: 20,
@@ -165,41 +226,17 @@ class _CameraScreenState extends State<CameraScreen> {
                 borderRadius: BorderRadius.circular(30),
               ),
               child: IconButton(
-                icon: Stack(
-                  children: [
-                    const Icon(
-                      Icons.photo_library,
-                      color: Colors.white,
-                      size: 28,
-                    ),
-                    if (_photos.isNotEmpty)
-                      Positioned(
-                        right: 0,
-                        top: 0,
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: const BoxDecoration(
-                            color: Colors.blue,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Text(
-                            '${_photos.length}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
+                icon: const Icon(
+                  Icons.photo_library,
+                  color: Colors.white,
+                  size: 28,
                 ),
                 onPressed: _photos.isEmpty ? null : _openGallery,
               ),
             ),
           ),
 
-          // Bottom Preview Thumbnails
+          // Bottom thumbnails
           if (_photos.isNotEmpty)
             Positioned(
               bottom: 120,
@@ -210,7 +247,7 @@ class _CameraScreenState extends State<CameraScreen> {
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 itemCount: _photos.length > 5 ? 5 : _photos.length,
-                itemBuilder: (context, index) {
+                itemBuilder: (_, index) {
                   return GestureDetector(
                     onTap: () {
                       Navigator.push(
@@ -230,20 +267,10 @@ class _CameraScreenState extends State<CameraScreen> {
                       decoration: BoxDecoration(
                         border: Border.all(color: Colors.white, width: 2),
                         borderRadius: BorderRadius.circular(8),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.5),
-                            blurRadius: 4,
-                            spreadRadius: 1,
-                          ),
-                        ],
                       ),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(6),
-                        child: Image.file(
-                          _photos[index],
-                          fit: BoxFit.cover,
-                        ),
+                        child: Image.file(_photos[index], fit: BoxFit.cover),
                       ),
                     ),
                   );
@@ -265,29 +292,43 @@ class _CameraScreenState extends State<CameraScreen> {
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     border: Border.all(color: Colors.white, width: 5),
-                    color: _capturing ? Colors.grey : Colors.transparent,
                   ),
-                  child: _capturing
-                      ? const Padding(
-                          padding: EdgeInsets.all(20),
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 3,
-                          ),
-                        )
-                      : Container(
-                          margin: const EdgeInsets.all(8),
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.white,
-                          ),
-                        ),
+                  child: Container(
+                    margin: const EdgeInsets.all(8),
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white,
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
 
-          // Polarization Effect Label
+          // Camera Switch Button
+          Positioned(
+            bottom: 40,
+            right: 30,
+            child: GestureDetector(
+              onTap: _switchCamera,
+              child: Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                ),
+                child: const Icon(
+                  Icons.cameraswitch,
+                  color: Colors.white,
+                  size: 28,
+                ),
+              ),
+            ),
+          ),
+
+          // Polarization Label
           Positioned(
             top: 50,
             left: 20,
@@ -298,13 +339,8 @@ class _CameraScreenState extends State<CameraScreen> {
                 borderRadius: BorderRadius.circular(20),
               ),
               child: const Row(
-                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    Icons.filter_vintage,
-                    color: Colors.blue,
-                    size: 20,
-                  ),
+                  Icon(Icons.filter_vintage, color: Colors.blue, size: 20),
                   SizedBox(width: 8),
                   Text(
                     'Polarized',
