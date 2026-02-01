@@ -465,7 +465,7 @@ class _CameraScreenState extends State<CameraScreen>
                     ),
                     child: Center(
                       child: Text(
-                        'POLAROID',
+                        'NeoPolar Cam',
                         style: TextStyle(
                           color: Colors.white.withOpacity(0.3),
                           fontSize: 16,
