@@ -341,11 +341,6 @@ class _CameraScreenState extends State<CameraScreen>
       // Reload all photos from gallery to get the saved file
       final photos = await GallerySaver.getSavedPhotos();
 
-      // setState(() {
-      //   _photos.insert(0, polarizedImage);
-      //   _isProcessing = false;
-      // });
-
       setState(() {
         _photos.clear();
         _photos.addAll(photos);
