@@ -30,6 +30,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -57,6 +58,9 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
+  assets:
+    - assets/sounds/click.mp3
+    - assets/sounds/printing.mp3
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in

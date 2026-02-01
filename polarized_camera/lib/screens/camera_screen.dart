@@ -51,10 +51,25 @@ class _CameraScreenState extends State<CameraScreen>
       vsync: this,
       duration: const Duration(milliseconds: 200),
     );
+
+    _audioPlayer.setAudioContext(
+      AudioContext(
+        android: AudioContextAndroid(
+          usageType: AndroidUsageType.media,
+          contentType: AndroidContentType.sonification,
+          audioFocus: AndroidAudioFocus.none,
+        ),
+        iOS: AudioContextIOS(category: AVAudioSessionCategory.ambient),
+      ),
+    );
+
     _requestPermissions();
     _loadExistingPhotos();
     _initCamera();
   }
+
+  bool cameraCaptureSoundEnable = false;
+  bool printingPolarizedImageSound = false;
 
   /// ✅ Request storage permissions
   Future<void> _requestPermissions() async {
@@ -241,12 +256,15 @@ class _CameraScreenState extends State<CameraScreen>
   /// Play camera shutter sound
   Future<void> _playShutterSound() async {
     try {
-      // Play system camera shutter sound
-      await SystemSound.play(SystemSoundType.click);
-
-      // Alternative: You can also use a custom sound file
-      // Place a shutter.mp3 in assets/sounds/
-      // await _audioPlayer.play(AssetSource('sounds/shutter.mp3'));
+      if (cameraCaptureSoundEnable) {
+        await _audioPlayer.play(AssetSource('sounds/click.mp3'));
+        cameraCaptureSoundEnable = false;
+        return;
+      } else if (printingPolarizedImageSound) {
+        await _audioPlayer.play(AssetSource('sounds/printing.mp3'));
+        printingPolarizedImageSound = false;
+        return;
+      }
     } catch (e) {
       debugPrint('Error playing shutter sound: $e');
     }
@@ -269,6 +287,7 @@ class _CameraScreenState extends State<CameraScreen>
     setState(() => _capturing = true);
 
     // Play shutter sound
+    cameraCaptureSoundEnable = true;
     _playShutterSound();
 
     // Shutter animation
@@ -315,6 +334,9 @@ class _CameraScreenState extends State<CameraScreen>
 
   /// Process image in background without freezing UI
   Future<void> _processImageInBackground(XFile picture) async {
+    // Play shutter sound
+    printingPolarizedImageSound = true;
+    _playShutterSound();
     try {
       // ✅ Use temporary directory instead of Pictures
       final Directory tempDir = await getTemporaryDirectory();
@@ -410,6 +432,7 @@ class _CameraScreenState extends State<CameraScreen>
 
     return Scaffold(
       backgroundColor: const Color(0xFFD5D5D5),
+
       body: Stack(
         children: [
           // White flash overlay
