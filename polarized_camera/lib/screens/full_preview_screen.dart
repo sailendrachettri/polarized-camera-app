@@ -108,8 +108,12 @@ class _FullPreviewScreenState extends State<FullPreviewScreen> {
                   maxScale: 4.0,
                   child: SizedBox.expand(
                     child: Container(
-                      color:
-                          Color.fromARGB(1, 212, 213, 213), // light background everywhere
+                      color: Color.fromARGB(
+                        1,
+                        212,
+                        213,
+                        213,
+                      ), // light background everywhere
                       alignment: Alignment.center,
                       child: Image.file(
                         widget.allPhotos[index],
@@ -183,31 +187,6 @@ class _FullPreviewScreenState extends State<FullPreviewScreen> {
                               _deletePhoto(widget.allPhotos[_currentIndex]),
                         ),
                       ],
-                    ),
-                  ),
-                ),
-              ),
-
-            // Bottom Navigation Dots
-            if (_showControls && widget.allPhotos.length > 1)
-              Positioned(
-                bottom: 30,
-                left: 0,
-                right: 0,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: List.generate(
-                    widget.allPhotos.length,
-                    (index) => Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 4),
-                      width: _currentIndex == index ? 12 : 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: _currentIndex == index
-                            ? Colors.blue
-                            : Colors.white.withOpacity(0.5),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
                     ),
                   ),
                 ),
