@@ -21,8 +21,9 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   CameraLensDirection _currentLens = CameraLensDirection.back;
   final List<File> _photos = [];
   late AnimationController _shutterAnimController;
-  late AnimationController _flashAnimController;
-  bool _showFlash = false;
+  late AnimationController _processingAnimController;
+  bool _isProcessing = false;
+  FlashMode _flashMode = FlashMode.off;
 
   @override
   void initState() {
@@ -31,10 +32,10 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       vsync: this,
       duration: const Duration(milliseconds: 150),
     );
-    _flashAnimController = AnimationController(
+    _processingAnimController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 200),
-    );
+      duration: const Duration(milliseconds: 1500),
+    )..repeat();
     _loadExistingPhotos();
     _initCamera();
   }
@@ -62,7 +63,6 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     }
 
     try {
-      // Dispose old controller safely
       await _controller?.dispose();
 
       final preset = ResolutionPreset.high;
@@ -75,6 +75,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       );
 
       await _controller!.initialize();
+      await _controller!.setFlashMode(_flashMode);
 
       if (!mounted) return;
       setState(() => _initialized = true);
@@ -88,15 +89,35 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     }
   }
 
+  /// Toggle flash mode
+  Future<void> _toggleFlash() async {
+    if (_controller == null || !_initialized) return;
+
+    try {
+      FlashMode newMode;
+      if (_flashMode == FlashMode.off) {
+        newMode = FlashMode.always;
+      } else if (_flashMode == FlashMode.always) {
+        newMode = FlashMode.auto;
+      } else {
+        newMode = FlashMode.off;
+      }
+
+      await _controller!.setFlashMode(newMode);
+      setState(() => _flashMode = newMode);
+    } catch (e) {
+      debugPrint('Flash toggle error: $e');
+    }
+  }
+
   /// Switch front/back camera safely
   Future<void> _switchCamera() async {
-    if (_capturing) return;
+    if (_capturing || _isProcessing) return;
 
     final newLens = _currentLens == CameraLensDirection.back
         ? CameraLensDirection.front
         : CameraLensDirection.back;
 
-    // Check if camera exists
     if (_getCamera(newLens) == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('This camera is not available')),
@@ -109,7 +130,6 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       _currentLens = newLens;
     });
 
-    // Small delay to ensure controller disposal
     await Future.delayed(const Duration(milliseconds: 200));
     await _initCamera();
   }
@@ -140,33 +160,43 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   void dispose() {
     _controller?.dispose();
     _shutterAnimController.dispose();
-    _flashAnimController.dispose();
+    _processingAnimController.dispose();
     super.dispose();
   }
 
-  /// Take picture and apply polarization effect
+  /// Take picture and apply polarization effect in background
   Future<void> _takePicture() async {
     if (_capturing || !_initialized || _controller == null) return;
 
     setState(() => _capturing = true);
 
-    // Shutter animation
     _shutterAnimController.forward().then((_) {
       _shutterAnimController.reverse();
-    });
-
-    // Flash effect
-    setState(() => _showFlash = true);
-    _flashAnimController.forward().then((_) {
-      _flashAnimController.reverse();
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (mounted) setState(() => _showFlash = false);
-      });
     });
 
     try {
       final XFile picture = await _controller!.takePicture();
 
+      setState(() {
+        _capturing = false;
+        _isProcessing = true;
+      });
+
+      _processImageInBackground(picture);
+    } catch (e) {
+      debugPrint('Capture error: $e');
+      setState(() => _capturing = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Capture failed: $e')),
+        );
+      }
+    }
+  }
+
+  /// Process image in background without freezing UI
+  Future<void> _processImageInBackground(XFile picture) async {
+    try {
       final Directory picturesDir =
           Directory('/storage/emulated/0/Pictures/PolarizedCamera');
       if (!await picturesDir.exists()) {
@@ -183,28 +213,28 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       final File polarizedImage =
           await PolarizationEffect.applyEffect(rawImage, intensity: 0.7);
 
-      setState(() {
-        _photos.insert(0, polarizedImage);
-      });
-
       if (mounted) {
+        setState(() {
+          _photos.insert(0, polarizedImage);
+          _isProcessing = false;
+        });
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('📸 Saved'),
-            duration: Duration(milliseconds: 800),
+            content: Text('✨ Photo saved with polarization'),
+            duration: Duration(milliseconds: 1200),
             backgroundColor: Colors.black87,
           ),
         );
       }
     } catch (e) {
-      debugPrint('Capture error: $e');
+      debugPrint('Processing error: $e');
       if (mounted) {
+        setState(() => _isProcessing = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Capture failed: $e')),
+          SnackBar(content: Text('Processing failed: $e')),
         );
       }
-    } finally {
-      setState(() => _capturing = false);
     }
   }
 
@@ -219,404 +249,350 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   Widget build(BuildContext context) {
     if (!_initialized || _controller == null) {
       return const Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: Color(0xFFD5D5D5),
         body: Center(
           child: CircularProgressIndicator(
-            color: Colors.white70,
+            color: Colors.black54,
             strokeWidth: 2,
           ),
         ),
       );
     }
 
-    final size = MediaQuery.of(context).size;
-    final deviceRatio = size.width / size.height;
+    final screenSize = MediaQuery.of(context).size;
+    final cameraAspectRatio = _controller!.value.aspectRatio;
+    
+    // Calculate viewfinder size to match reference design
+    final viewfinderWidth = screenSize.width * 0.70;
+    final viewfinderHeight = viewfinderWidth * 1.4; // Portrait ratio like in reference
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: const Color(0xFFD5D5D5), // Light gray background
       body: Stack(
         children: [
-          // Camera Preview - FIXED: No mirroring for front camera
-          Positioned.fill(
-            child: FittedBox(
-              fit: BoxFit.cover,
-              child: SizedBox(
-                width: size.width,
-                height: size.width * _controller!.value.aspectRatio,
-                child: CameraPreview(_controller!),
-              ),
-            ),
-          ),
-
-          // Flash overlay
-          if (_showFlash)
-            Positioned.fill(
-              child: FadeTransition(
-                opacity: Tween<double>(begin: 0.8, end: 0.0).animate(
-                  CurvedAnimation(
-                    parent: _flashAnimController,
-                    curve: Curves.easeOut,
-                  ),
+          // Main layout
+          Column(
+            children: [
+              // Top section with brand label
+              Container(
+                padding: EdgeInsets.only(
+                  top: MediaQuery.of(context).padding.top + 20,
                 ),
-                child: Container(color: Colors.white),
-              ),
-            ),
-
-          // Top bar with vintage film camera aesthetic
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              padding: EdgeInsets.only(
-                top: MediaQuery.of(context).padding.top + 12,
-                bottom: 16,
-                left: 20,
-                right: 20,
-              ),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withOpacity(0.7),
-                    Colors.black.withOpacity(0.0),
-                  ],
-                ),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // Film counter style badge
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
+                child: Center(
+                  child: Container(
+                    width: 180,
+                    height: 50,
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                        color: Colors.white.withOpacity(0.3),
-                        width: 1,
-                      ),
+                      color: const Color(0xFF3A3A3A),
+                      borderRadius: BorderRadius.circular(25),
                     ),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.filter_vintage,
-                          color: Colors.white,
-                          size: 16,
+                    child: Center(
+                      child: Text(
+                        'POLAROID',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.3),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 2,
                         ),
-                        const SizedBox(width: 6),
-                        Text(
-                          'POLAROID',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 1.2,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
+                ),
+              ),
 
-                  // Gallery button
-                  GestureDetector(
-                    onTap: _photos.isEmpty ? null : _openGallery,
-                    child: Container(
-                      width: 42,
-                      height: 42,
+              const SizedBox(height: 40),
+
+              // Camera viewfinder with thick frame
+              Center(
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // Main frame container
+                    Container(
+                      width: viewfinderWidth + 32,
+                      height: viewfinderHeight + 32,
                       decoration: BoxDecoration(
-                        color: _photos.isEmpty
-                            ? Colors.white.withOpacity(0.1)
-                            : Colors.white.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.3),
-                          width: 1,
-                        ),
+                        color: const Color(0xFF2A2A2A),
+                        borderRadius: BorderRadius.circular(32),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.5),
+                            blurRadius: 20,
+                            spreadRadius: 2,
+                          ),
+                        ],
                       ),
-                      child: _photos.isEmpty
-                          ? Icon(
-                              Icons.photo_library_outlined,
-                              color: Colors.white.withOpacity(0.5),
-                              size: 22,
-                            )
-                          : ClipRRect(
-                              borderRadius: BorderRadius.circular(7),
-                              child: Image.file(
-                                _photos[0],
-                                fit: BoxFit.cover,
+                      child: Stack(
+                        children: [
+                          // Textured overlay on frame
+                          Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(32),
+                              gradient: LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  Colors.white.withOpacity(0.1),
+                                  Colors.transparent,
+                                  Colors.black.withOpacity(0.2),
+                                ],
                               ),
                             ),
+                          ),
+                          // Noise texture
+                          CustomPaint(
+                            size: Size(viewfinderWidth + 32, viewfinderHeight + 32),
+                            painter: NoisePainter(),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            ),
-          ),
 
-          // Bottom control bar with film camera aesthetic
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).padding.bottom + 20,
-                top: 30,
-                left: 20,
-                right: 20,
-              ),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.bottomCenter,
-                  end: Alignment.topCenter,
-                  colors: [
-                    Colors.black.withOpacity(0.8),
-                    Colors.black.withOpacity(0.0),
+                    // Camera preview
+                    Container(
+                      width: viewfinderWidth,
+                      height: viewfinderHeight,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(20),
+                        color: Colors.black,
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(20),
+                        child: FittedBox(
+                          fit: BoxFit.cover,
+                          child: SizedBox(
+                            width: viewfinderWidth,
+                            height: viewfinderWidth * cameraAspectRatio,
+                            child: CameraPreview(_controller!),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // Processing overlay
+                    if (_isProcessing)
+                      Container(
+                        width: viewfinderWidth,
+                        height: viewfinderHeight,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(20),
+                          color: Colors.black.withOpacity(0.7),
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            RotationTransition(
+                              turns: _processingAnimController,
+                              child: const Icon(
+                                Icons.filter_vintage,
+                                color: Colors.white,
+                                size: 48,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'Applying Polarization...',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                   ],
                 ),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  // Camera mode indicator
-                  Container(
-                    width: 50,
-                    height: 50,
-                    alignment: Alignment.center,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _currentLens == CameraLensDirection.back
-                              ? Icons.camera_rear
-                              : Icons.camera_front,
-                          color: Colors.white.withOpacity(0.6),
-                          size: 24,
-                        ),
-                        const SizedBox(height: 4),
-                        Container(
-                          width: 4,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.6),
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
 
-                  // Capture button - vintage shutter style
-                  GestureDetector(
-                    onTap: _capturing ? null : _takePicture,
-                    child: AnimatedBuilder(
-                      animation: _shutterAnimController,
-                      builder: (context, child) {
-                        return Transform.scale(
-                          scale: 1.0 - (_shutterAnimController.value * 0.15),
+              const Spacer(),
+
+              // Controls area
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 40),
+                child: Column(
+                  children: [
+                    // Flash and Gallery buttons
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        // Flash toggle
+                        GestureDetector(
+                          onTap: _toggleFlash,
                           child: Container(
-                            width: 76,
-                            height: 76,
+                            width: 60,
+                            height: 60,
                             decoration: BoxDecoration(
+                              color: Colors.white,
                               shape: BoxShape.circle,
                               border: Border.all(
-                                color: Colors.white,
-                                width: 3,
+                                color: const Color(0xFF4A4A4A),
+                                width: 2,
                               ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.3),
-                                  blurRadius: 8,
-                                  spreadRadius: 2,
-                                ),
-                              ],
                             ),
-                            child: Container(
-                              margin: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: _capturing
-                                    ? Colors.white.withOpacity(0.7)
-                                    : Colors.white,
-                              ),
-                              child: _capturing
-                                  ? const Center(
-                                      child: SizedBox(
-                                        width: 24,
-                                        height: 24,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.black54,
-                                        ),
-                                      ),
-                                    )
-                                  : null,
+                            child: Icon(
+                              _flashMode == FlashMode.off
+                                  ? Icons.flash_off
+                                  : _flashMode == FlashMode.always
+                                      ? Icons.flash_on
+                                      : Icons.flash_auto,
+                              color: const Color(0xFF2A2A2A),
+                              size: 28,
                             ),
                           ),
-                        );
-                      },
-                    ),
-                  ),
+                        ),
 
-                  // Camera switch button
-                  GestureDetector(
-                    onTap: _capturing ? null : _switchCamera,
-                    child: Container(
-                      width: 50,
+                        // Capture button
+                        GestureDetector(
+                          onTap: _capturing ? null : _takePicture,
+                          child: AnimatedBuilder(
+                            animation: _shutterAnimController,
+                            builder: (context, child) {
+                              return Transform.scale(
+                                scale: 1.0 - (_shutterAnimController.value * 0.1),
+                                child: Container(
+                                  width: 85,
+                                  height: 85,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: const Color(0xFF2A2A2A),
+                                      width: 3,
+                                    ),
+                                  ),
+                                  child: _capturing
+                                      ? const Center(
+                                          child: SizedBox(
+                                            width: 32,
+                                            height: 32,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 3,
+                                              color: Color(0xFF2A2A2A),
+                                            ),
+                                          ),
+                                        )
+                                      : null,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+
+                        // Gallery button
+                        GestureDetector(
+                          onTap: _photos.isEmpty ? null : _openGallery,
+                          child: Container(
+                            width: 60,
+                            height: 60,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: const Color(0xFF4A4A4A),
+                                width: 2,
+                              ),
+                            ),
+                            child: _photos.isEmpty
+                                ? const Icon(
+                                    Icons.photo_library,
+                                    color: Color(0xFF2A2A2A),
+                                    size: 28,
+                                  )
+                                : ClipOval(
+                                    child: Image.file(
+                                      _photos[0],
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // Gallery and Camera switch toggle
+                    Container(
                       height: 50,
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.15),
-                        shape: BoxShape.circle,
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(25),
                         border: Border.all(
-                          color: Colors.white.withOpacity(0.3),
-                          width: 1.5,
+                          color: const Color(0xFF4A4A4A),
+                          width: 2,
                         ),
                       ),
-                      child: Icon(
-                        Icons.flip_camera_ios_outlined,
-                        color: Colors.white.withOpacity(0.9),
-                        size: 26,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Gallery icon
+                          GestureDetector(
+                            onTap: _photos.isEmpty ? null : _openGallery,
+                            child: Container(
+                              width: 70,
+                              height: 50,
+                              decoration: const BoxDecoration(
+                                border: Border(
+                                  right: BorderSide(
+                                    color: Color(0xFF4A4A4A),
+                                    width: 1,
+                                  ),
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.photo_library,
+                                color: Color(0xFF2A2A2A),
+                                size: 24,
+                              ),
+                            ),
+                          ),
+                          // Camera switch icon
+                          GestureDetector(
+                            onTap: (_capturing || _isProcessing) ? null : _switchCamera,
+                            child: Container(
+                              width: 70,
+                              height: 50,
+                              child: const Icon(
+                                Icons.flip_camera_ios,
+                                color: Color(0xFF2A2A2A),
+                                size: 24,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // Film frame corners (vintage aesthetic touch)
-          ..._buildFilmFrameCorners(),
-
-          // Photo counter
-          if (_photos.isNotEmpty)
-            Positioned(
-              bottom: MediaQuery.of(context).padding.bottom + 90,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.6),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: Colors.white.withOpacity(0.2),
-                      width: 1,
-                    ),
-                  ),
-                  child: Text(
-                    '${_photos.length}',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.9),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: 1,
-                    ),
-                  ),
+                  ],
                 ),
               ),
-            ),
+
+              SizedBox(height: MediaQuery.of(context).padding.bottom + 30),
+            ],
+          ),
         ],
       ),
     );
   }
-
-  List<Widget> _buildFilmFrameCorners() {
-    const cornerSize = 20.0;
-    const cornerThickness = 2.0;
-    const margin = 16.0;
-
-    Widget buildCorner({
-      required Alignment alignment,
-      required bool showTop,
-      required bool showLeft,
-    }) {
-      return Align(
-        alignment: alignment,
-        child: Container(
-          margin: EdgeInsets.only(
-            top: alignment.y < 0 ? margin + MediaQuery.of(context).padding.top : margin,
-            bottom: alignment.y > 0 ? margin + MediaQuery.of(context).padding.bottom : margin,
-            left: alignment.x < 0 ? margin : 0,
-            right: alignment.x > 0 ? margin : 0,
-          ),
-          width: cornerSize,
-          height: cornerSize,
-          child: CustomPaint(
-            painter: CornerPainter(
-              showTop: showTop,
-              showLeft: showLeft,
-              color: Colors.white.withOpacity(0.3),
-              thickness: cornerThickness,
-            ),
-          ),
-        ),
-      );
-    }
-
-    return [
-      buildCorner(alignment: Alignment.topLeft, showTop: true, showLeft: true),
-      buildCorner(alignment: Alignment.topRight, showTop: true, showLeft: false),
-      buildCorner(alignment: Alignment.bottomLeft, showTop: false, showLeft: true),
-      buildCorner(alignment: Alignment.bottomRight, showTop: false, showLeft: false),
-    ];
-  }
 }
 
-class CornerPainter extends CustomPainter {
-  final bool showTop;
-  final bool showLeft;
-  final Color color;
-  final double thickness;
-
-  CornerPainter({
-    required this.showTop,
-    required this.showLeft,
-    required this.color,
-    required this.thickness,
-  });
-
+// Painter for noise/grain texture on the frame
+class NoisePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = color
-      ..strokeWidth = thickness
-      ..style = PaintingStyle.stroke;
+      ..color = Colors.white.withOpacity(0.03)
+      ..style = PaintingStyle.fill;
 
-    final path = Path();
-
-    if (showTop && showLeft) {
-      // Top-left corner
-      path.moveTo(0, size.height);
-      path.lineTo(0, 0);
-      path.lineTo(size.width, 0);
-    } else if (showTop && !showLeft) {
-      // Top-right corner
-      path.moveTo(0, 0);
-      path.lineTo(size.width, 0);
-      path.lineTo(size.width, size.height);
-    } else if (!showTop && showLeft) {
-      // Bottom-left corner
-      path.moveTo(0, 0);
-      path.lineTo(0, size.height);
-      path.lineTo(size.width, size.height);
-    } else {
-      // Bottom-right corner
-      path.moveTo(0, size.height);
-      path.lineTo(size.width, size.height);
-      path.lineTo(size.width, 0);
+    // Create grain effect
+    for (double i = 0; i < size.width; i += 2) {
+      for (double j = 0; j < size.height; j += 2) {
+        if ((i.toInt() + j.toInt()) % 4 == 0) {
+          canvas.drawCircle(Offset(i, j), 0.5, paint);
+        }
+      }
     }
-
-    canvas.drawPath(path, paint);
   }
 
   @override
