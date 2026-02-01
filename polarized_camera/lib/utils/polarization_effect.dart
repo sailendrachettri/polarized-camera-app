@@ -72,8 +72,11 @@ class PolarizationEffect {
       height: totalHeight,
     );
 
-    // Fill entire image with black background (for outer margin)
-    img.fill(framedImage, color: img.ColorRgb8(0, 0, 0));
+    // Light outer margin background frame color
+    img.fill(
+      framedImage,
+      color: img.ColorRgb8(212, 213, 213), // very light gray 
+    );
 
     // Fill the frame area with white
     for (int y = outerMargin; y < outerMargin + frameHeight; y++) {
@@ -129,7 +132,7 @@ class PolarizationEffect {
           final int steppedDistance = ((distance / step).floor()) * step;
 
           if (steppedDistance > cornerRadius * cornerRadius) {
-            framedImage.setPixel(x, y, img.ColorRgb8(0, 0, 0));
+            framedImage.setPixel(x, y, img.ColorRgb8(212, 213, 213));
           }
         }
       }

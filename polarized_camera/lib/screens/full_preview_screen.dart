@@ -39,7 +39,7 @@ class _FullPreviewScreenState extends State<FullPreviewScreen> {
     final bool? confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: Colors.grey[900],
+        backgroundColor: const Color.fromARGB(255, 212, 213, 213),
         title: const Text('Delete Photo?'),
         content: const Text('This action cannot be undone.'),
         actions: [
@@ -84,7 +84,7 @@ class _FullPreviewScreenState extends State<FullPreviewScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: const Color.fromARGB(255, 212, 213, 213),
       body: GestureDetector(
         onTap: () {
           setState(() {
@@ -104,12 +104,17 @@ class _FullPreviewScreenState extends State<FullPreviewScreen> {
               },
               itemBuilder: (context, index) {
                 return InteractiveViewer(
-                  minScale: 0.5,
+                  minScale: 1.0,
                   maxScale: 4.0,
-                  child: Center(
-                    child: Image.file(
-                      widget.allPhotos[index],
-                      fit: BoxFit.contain,
+                  child: SizedBox.expand(
+                    child: Container(
+                      color:
+                          Color.fromARGB(1, 212, 213, 213), // light background everywhere
+                      alignment: Alignment.center,
+                      child: Image.file(
+                        widget.allPhotos[index],
+                        fit: BoxFit.contain,
+                      ),
                     ),
                   ),
                 );
@@ -137,7 +142,10 @@ class _FullPreviewScreenState extends State<FullPreviewScreen> {
                     child: Row(
                       children: [
                         IconButton(
-                          icon: const Icon(Icons.arrow_back, color: Colors.white),
+                          icon: const Icon(
+                            Icons.arrow_back,
+                            color: Colors.white,
+                          ),
                           onPressed: () => Navigator.pop(context),
                         ),
                         const Spacer(),
@@ -171,7 +179,8 @@ class _FullPreviewScreenState extends State<FullPreviewScreen> {
                         const SizedBox(width: 8),
                         IconButton(
                           icon: const Icon(Icons.delete, color: Colors.red),
-                          onPressed: () => _deletePhoto(widget.allPhotos[_currentIndex]),
+                          onPressed: () =>
+                              _deletePhoto(widget.allPhotos[_currentIndex]),
                         ),
                       ],
                     ),

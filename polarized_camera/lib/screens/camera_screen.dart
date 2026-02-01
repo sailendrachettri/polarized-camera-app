@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:path/path.dart' as path;
+import 'package:audioplayers/audioplayers.dart';
 import '../main.dart';
 import '../utils/polarization_effect.dart';
 import 'gallery_screen.dart';
@@ -22,8 +24,11 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   final List<File> _photos = [];
   late AnimationController _shutterAnimController;
   late AnimationController _processingAnimController;
+  late AnimationController _flashAnimController;
   bool _isProcessing = false;
   FlashMode _flashMode = FlashMode.off;
+  bool _isTorchOn = false;
+  final AudioPlayer _audioPlayer = AudioPlayer();
 
   @override
   void initState() {
@@ -36,6 +41,10 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat();
+    _flashAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
     _loadExistingPhotos();
     _initCamera();
   }
@@ -75,7 +84,16 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       );
 
       await _controller!.initialize();
-      await _controller!.setFlashMode(_flashMode);
+      
+      // Set initial flash mode
+      if (_currentLens == CameraLensDirection.back) {
+        await _controller!.setFlashMode(_flashMode);
+        
+        // Restore torch state if it was on
+        if (_isTorchOn && _flashMode == FlashMode.torch) {
+          await _controller!.setFlashMode(FlashMode.torch);
+        }
+      }
 
       if (!mounted) return;
       setState(() => _initialized = true);
@@ -89,24 +107,52 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     }
   }
 
-  /// Toggle flash mode
+  /// Toggle flash/torch mode
   Future<void> _toggleFlash() async {
     if (_controller == null || !_initialized) return;
 
+    // Front camera doesn't support flash
+    if (_currentLens == CameraLensDirection.front) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Flash not available on front camera'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+      return;
+    }
+
     try {
       FlashMode newMode;
+      bool newTorchState = false;
+
       if (_flashMode == FlashMode.off) {
-        newMode = FlashMode.always;
-      } else if (_flashMode == FlashMode.always) {
+        // Off -> Torch (always on)
+        newMode = FlashMode.torch;
+        newTorchState = true;
+      } else if (_flashMode == FlashMode.torch) {
+        // Torch -> Auto (flash on capture)
         newMode = FlashMode.auto;
+        newTorchState = false;
       } else {
+        // Auto -> Off
         newMode = FlashMode.off;
+        newTorchState = false;
       }
 
       await _controller!.setFlashMode(newMode);
-      setState(() => _flashMode = newMode);
+      setState(() {
+        _flashMode = newMode;
+        _isTorchOn = newTorchState;
+      });
     } catch (e) {
       debugPrint('Flash toggle error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to toggle flash'),
+          duration: Duration(seconds: 1),
+        ),
+      );
     }
   }
 
@@ -125,9 +171,23 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       return;
     }
 
+    // Turn off torch when switching cameras
+    if (_isTorchOn && _controller != null) {
+      try {
+        await _controller!.setFlashMode(FlashMode.off);
+      } catch (e) {
+        debugPrint('Error turning off torch: $e');
+      }
+    }
+
     setState(() {
       _initialized = false;
       _currentLens = newLens;
+      // Reset flash mode when switching to front camera
+      if (newLens == CameraLensDirection.front) {
+        _flashMode = FlashMode.off;
+        _isTorchOn = false;
+      }
     });
 
     await Future.delayed(const Duration(milliseconds: 200));
@@ -156,11 +216,27 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     }
   }
 
+  /// Play camera shutter sound
+  Future<void> _playShutterSound() async {
+    try {
+      // Play system camera shutter sound
+      await SystemSound.play(SystemSoundType.click);
+      
+      // Alternative: You can also use a custom sound file
+      // Place a shutter.mp3 in assets/sounds/
+      // await _audioPlayer.play(AssetSource('sounds/shutter.mp3'));
+    } catch (e) {
+      debugPrint('Error playing shutter sound: $e');
+    }
+  }
+
   @override
   void dispose() {
     _controller?.dispose();
     _shutterAnimController.dispose();
     _processingAnimController.dispose();
+    _flashAnimController.dispose();
+    _audioPlayer.dispose();
     super.dispose();
   }
 
@@ -170,12 +246,33 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 
     setState(() => _capturing = true);
 
+    // Play shutter sound
+    _playShutterSound();
+
+    // Shutter animation
     _shutterAnimController.forward().then((_) {
       _shutterAnimController.reverse();
     });
 
+    // Flash animation effect
+    _flashAnimController.forward().then((_) {
+      _flashAnimController.reverse();
+    });
+
     try {
+      // If using auto flash, temporarily set flash mode for this capture
+      if (_flashMode == FlashMode.auto) {
+        await _controller!.setFlashMode(FlashMode.always);
+      }
+
       final XFile picture = await _controller!.takePicture();
+
+      // Restore torch mode if it was on
+      if (_isTorchOn) {
+        await _controller!.setFlashMode(FlashMode.torch);
+      } else if (_flashMode == FlashMode.auto) {
+        await _controller!.setFlashMode(FlashMode.auto);
+      }
 
       setState(() {
         _capturing = false;
@@ -245,6 +342,23 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     );
   }
 
+  IconData _getFlashIcon() {
+    if (_currentLens == CameraLensDirection.front) {
+      return Icons.flash_off;
+    }
+    
+    switch (_flashMode) {
+      case FlashMode.off:
+        return Icons.flash_off;
+      case FlashMode.torch:
+        return Icons.flash_on;
+      case FlashMode.auto:
+        return Icons.flash_auto;
+      default:
+        return Icons.flash_off;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!_initialized || _controller == null) {
@@ -262,14 +376,27 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     final screenSize = MediaQuery.of(context).size;
     final cameraAspectRatio = _controller!.value.aspectRatio;
     
-    // Calculate viewfinder size to match reference design
     final viewfinderWidth = screenSize.width * 0.70;
-    final viewfinderHeight = viewfinderWidth * 1.4; // Portrait ratio like in reference
+    final viewfinderHeight = viewfinderWidth * 1.4;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFD5D5D5), // Light gray background
+      backgroundColor: const Color(0xFFD5D5D5),
       body: Stack(
         children: [
+          // White flash overlay
+          if (_flashAnimController.isAnimating)
+            FadeTransition(
+              opacity: Tween<double>(begin: 0.9, end: 0.0).animate(
+                CurvedAnimation(
+                  parent: _flashAnimController,
+                  curve: Curves.easeOut,
+                ),
+              ),
+              child: Container(
+                color: Colors.white,
+              ),
+            ),
+
           // Main layout
           Column(
             children: [
@@ -355,7 +482,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                       height: viewfinderHeight,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(20),
-                        color: Colors.black,
+                        color: Colors.grey.shade200,
                       ),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(20),
@@ -424,20 +551,22 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                             width: 60,
                             height: 60,
                             decoration: BoxDecoration(
-                              color: Colors.white,
+                              color: _isTorchOn 
+                                  ? Colors.yellow.shade100 
+                                  : Colors.white,
                               shape: BoxShape.circle,
                               border: Border.all(
-                                color: const Color(0xFF4A4A4A),
+                                color: _isTorchOn 
+                                    ? Colors.yellow.shade700 
+                                    : const Color(0xFF4A4A4A),
                                 width: 2,
                               ),
                             ),
                             child: Icon(
-                              _flashMode == FlashMode.off
-                                  ? Icons.flash_off
-                                  : _flashMode == FlashMode.always
-                                      ? Icons.flash_on
-                                      : Icons.flash_auto,
-                              color: const Color(0xFF2A2A2A),
+                              _getFlashIcon(),
+                              color: _isTorchOn 
+                                  ? Colors.yellow.shade800 
+                                  : const Color(0xFF2A2A2A),
                               size: 28,
                             ),
                           ),
@@ -551,7 +680,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                           // Camera switch icon
                           GestureDetector(
                             onTap: (_capturing || _isProcessing) ? null : _switchCamera,
-                            child: Container(
+                            child: SizedBox(
                               width: 70,
                               height: 50,
                               child: const Icon(

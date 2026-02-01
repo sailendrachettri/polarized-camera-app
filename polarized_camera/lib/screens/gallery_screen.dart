@@ -10,11 +10,19 @@ class GalleryScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        backgroundColor: Colors.black,
-        title: Text('Gallery (${photos.length})'),
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
         elevation: 0,
+        title: Text(
+          'Gallery (${photos.length})',
+          style: const TextStyle(
+            color: Colors.black,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        iconTheme: const IconThemeData(color: Colors.black),
       ),
       body: photos.isEmpty
           ? const Center(
@@ -24,13 +32,13 @@ class GalleryScreen extends StatelessWidget {
                   Icon(
                     Icons.photo_library_outlined,
                     size: 80,
-                    color: Colors.grey,
+                    color: Colors.black38,
                   ),
                   SizedBox(height: 16),
                   Text(
                     'No photos yet',
                     style: TextStyle(
-                      color: Colors.grey,
+                      color: Colors.black54,
                       fontSize: 18,
                     ),
                   ),
@@ -38,11 +46,11 @@ class GalleryScreen extends StatelessWidget {
               ),
             )
           : GridView.builder(
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.all(12),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 3,
-                crossAxisSpacing: 4,
-                mainAxisSpacing: 4,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
               ),
               itemCount: photos.length,
               itemBuilder: (context, index) {
@@ -59,48 +67,14 @@ class GalleryScreen extends StatelessWidget {
                       ),
                     );
                   },
-                  child: Card(
-                    elevation: 4,
-                    clipBehavior: Clip.antiAlias,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        Image.file(
-                          photos[index],
-                          fit: BoxFit.cover,
-                        ),
-                        Container(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [
-                                Colors.transparent,
-                                Colors.black.withOpacity(0.3),
-                              ],
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          top: 4,
-                          right: 4,
-                          child: Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: BoxDecoration(
-                              color: Colors.blue.withOpacity(0.8),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Icon(
-                              Icons.filter_vintage,
-                              size: 16,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ],
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      color: Colors.grey.shade200,
+                      child: Image.file(
+                        photos[index],
+                        fit: BoxFit.contain,
+                      ),
                     ),
                   ),
                 );
