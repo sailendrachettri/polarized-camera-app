@@ -10,10 +10,10 @@ class GalleryScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color.fromARGB(255, 212, 213, 213),
       appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
+        backgroundColor: const Color.fromARGB(255, 212, 213, 213),
+        surfaceTintColor: const Color.fromARGB(255, 212, 213, 213),
         elevation: 0,
         title: Text(
           'Gallery (${photos.length})',
@@ -37,10 +37,7 @@ class GalleryScreen extends StatelessWidget {
                   SizedBox(height: 16),
                   Text(
                     'No photos yet',
-                    style: TextStyle(
-                      color: Colors.black54,
-                      fontSize: 18,
-                    ),
+                    style: TextStyle(color: Colors.black54, fontSize: 18),
                   ),
                 ],
               ),
@@ -70,11 +67,8 @@ class GalleryScreen extends StatelessWidget {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(10),
                     child: Container(
-                      color: Colors.grey.shade200,
-                      child: Image.file(
-                        photos[index],
-                        fit: BoxFit.contain,
-                      ),
+                      color: Color.fromARGB(255, 212, 213, 213),
+                      child: Image.file(photos[index], fit: BoxFit.contain),
                     ),
                   ),
                 );
