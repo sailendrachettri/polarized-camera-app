@@ -8,6 +8,11 @@ import '../main.dart';
 import '../utils/polarization_effect.dart';
 import 'gallery_screen.dart';
 import 'full_preview_screen.dart';
+import 'dart:io';
+import 'package:media_store_plus/media_store_plus.dart';
+import '../utils/gallery_saver.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -16,7 +21,8 @@ class CameraScreen extends StatefulWidget {
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMixin {
+class _CameraScreenState extends State<CameraScreen>
+    with TickerProviderStateMixin {
   CameraController? _controller;
   bool _initialized = false;
   bool _capturing = false;
@@ -45,8 +51,27 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       vsync: this,
       duration: const Duration(milliseconds: 200),
     );
+    _requestPermissions();
     _loadExistingPhotos();
     _initCamera();
+  }
+
+  /// ✅ Request storage permissions
+  Future<void> _requestPermissions() async {
+    if (Platform.isAndroid) {
+      final status = await Permission.photos.request();
+
+      if (!status.isGranted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Storage permission is required to save photos'),
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    }
   }
 
   /// Get camera safely by lens direction
@@ -84,11 +109,11 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       );
 
       await _controller!.initialize();
-      
+
       // Set initial flash mode
       if (_currentLens == CameraLensDirection.back) {
         await _controller!.setFlashMode(_flashMode);
-        
+
         // Restore torch state if it was on
         if (_isTorchOn && _flashMode == FlashMode.torch) {
           await _controller!.setFlashMode(FlashMode.torch);
@@ -100,9 +125,9 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     } catch (e) {
       debugPrint('Camera init failed: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to open camera')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Failed to open camera')));
       }
     }
   }
@@ -196,23 +221,20 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 
   /// Load previously captured polarized photos
   Future<void> _loadExistingPhotos() async {
-    final Directory picturesDir =
-        Directory('/storage/emulated/0/Pictures/PolarizedCamera');
+    try {
+      // ✅ Use GallerySaver to get saved photos
+      final photos = await GallerySaver.getSavedPhotos();
 
-    if (await picturesDir.exists()) {
-      final files = picturesDir
-          .listSync()
-          .whereType<File>()
-          .where((f) => f.path.endsWith('_polarized.jpg'))
-          .toList();
+      if (mounted) {
+        setState(() {
+          _photos.clear();
+          _photos.addAll(photos);
+        });
+      }
 
-      files.sort(
-        (a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()),
-      );
-
-      setState(() {
-        _photos.addAll(files);
-      });
+      debugPrint('✅ Loaded ${photos.length} photos from gallery');
+    } catch (e) {
+      debugPrint('❌ Error loading existing photos: $e');
     }
   }
 
@@ -221,7 +243,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     try {
       // Play system camera shutter sound
       await SystemSound.play(SystemSoundType.click);
-      
+
       // Alternative: You can also use a custom sound file
       // Place a shutter.mp3 in assets/sounds/
       // await _audioPlayer.play(AssetSource('sounds/shutter.mp3'));
@@ -284,9 +306,9 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       debugPrint('Capture error: $e');
       setState(() => _capturing = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Capture failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Capture failed: $e')));
       }
     }
   }
@@ -294,43 +316,55 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   /// Process image in background without freezing UI
   Future<void> _processImageInBackground(XFile picture) async {
     try {
-      final Directory picturesDir =
-          Directory('/storage/emulated/0/Pictures/PolarizedCamera');
-      if (!await picturesDir.exists()) {
-        await picturesDir.create(recursive: true);
-      }
+      // ✅ Use temporary directory instead of Pictures
+      final Directory tempDir = await getTemporaryDirectory();
 
-      final String newPath = path.join(
-        picturesDir.path,
-        '${DateTime.now().millisecondsSinceEpoch}_polarized.jpg',
+      final String fileName =
+          '${DateTime.now().millisecondsSinceEpoch}_polarized.jpg';
+      final String tempPath = path.join(tempDir.path, fileName);
+
+      // Copy camera image to temp directory
+      final File rawImage = await File(picture.path).copy(tempPath);
+
+      // Apply effect (MODIFIES the same file)
+      final File polarizedImage = await PolarizationEffect.applyEffect(
+        rawImage,
+        intensity: 0.7,
       );
 
-      final File rawImage = await File(picture.path).copy(newPath);
+      if (!mounted) return;
 
-      final File polarizedImage =
-          await PolarizationEffect.applyEffect(rawImage, intensity: 0.7);
+      // ✅ Save to gallery (media_store_plus handles the actual gallery save)
+      await GallerySaver.saveToPictures(polarizedImage, fileName: fileName);
+      // await GallerySaver.saveToDownloads(polarizedImage, fileName: fileName);
 
-      if (mounted) {
-        setState(() {
-          _photos.insert(0, polarizedImage);
-          _isProcessing = false;
-        });
+      // Reload all photos from gallery to get the saved file
+      final photos = await GallerySaver.getSavedPhotos();
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✨ Photo saved with polarization'),
-            duration: Duration(milliseconds: 1200),
-            backgroundColor: Colors.black87,
-          ),
-        );
-      }
+      // setState(() {
+      //   _photos.insert(0, polarizedImage);
+      //   _isProcessing = false;
+      // });
+
+      setState(() {
+        _photos.clear();
+        _photos.addAll(photos);
+        _isProcessing = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('📸 Saved to Gallery'),
+          duration: Duration(milliseconds: 1200),
+        ),
+      );
     } catch (e) {
       debugPrint('Processing error: $e');
       if (mounted) {
         setState(() => _isProcessing = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Processing failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Processing failed: $e')));
       }
     }
   }
@@ -346,7 +380,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     if (_currentLens == CameraLensDirection.front) {
       return Icons.flash_off;
     }
-    
+
     switch (_flashMode) {
       case FlashMode.off:
         return Icons.flash_off;
@@ -375,7 +409,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 
     final screenSize = MediaQuery.of(context).size;
     final cameraAspectRatio = _controller!.value.aspectRatio;
-    
+
     final viewfinderWidth = screenSize.width * 0.70;
     final viewfinderHeight = viewfinderWidth * 1.4;
 
@@ -392,9 +426,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                   curve: Curves.easeOut,
                 ),
               ),
-              child: Container(
-                color: Colors.white,
-              ),
+              child: Container(color: Colors.white),
             ),
 
           // Main layout
@@ -469,7 +501,10 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                           ),
                           // Noise texture
                           CustomPaint(
-                            size: Size(viewfinderWidth + 32, viewfinderHeight + 32),
+                            size: Size(
+                              viewfinderWidth + 32,
+                              viewfinderHeight + 32,
+                            ),
                             painter: NoisePainter(),
                           ),
                         ],
@@ -551,21 +586,21 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                             width: 60,
                             height: 60,
                             decoration: BoxDecoration(
-                              color: _isTorchOn 
-                                  ? Colors.yellow.shade100 
+                              color: _isTorchOn
+                                  ? Colors.yellow.shade100
                                   : Colors.white,
                               shape: BoxShape.circle,
                               border: Border.all(
-                                color: _isTorchOn 
-                                    ? Colors.yellow.shade700 
+                                color: _isTorchOn
+                                    ? Colors.yellow.shade700
                                     : const Color(0xFF4A4A4A),
                                 width: 2,
                               ),
                             ),
                             child: Icon(
                               _getFlashIcon(),
-                              color: _isTorchOn 
-                                  ? Colors.yellow.shade800 
+                              color: _isTorchOn
+                                  ? Colors.yellow.shade800
                                   : const Color(0xFF2A2A2A),
                               size: 28,
                             ),
@@ -579,7 +614,8 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                             animation: _shutterAnimController,
                             builder: (context, child) {
                               return Transform.scale(
-                                scale: 1.0 - (_shutterAnimController.value * 0.1),
+                                scale:
+                                    1.0 - (_shutterAnimController.value * 0.1),
                                 child: Container(
                                   width: 85,
                                   height: 85,
@@ -679,7 +715,9 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                           ),
                           // Camera switch icon
                           GestureDetector(
-                            onTap: (_capturing || _isProcessing) ? null : _switchCamera,
+                            onTap: (_capturing || _isProcessing)
+                                ? null
+                                : _switchCamera,
                             child: SizedBox(
                               width: 70,
                               height: 50,

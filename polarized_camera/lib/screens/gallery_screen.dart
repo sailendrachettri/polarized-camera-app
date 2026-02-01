@@ -46,8 +46,9 @@ class GalleryScreen extends StatelessWidget {
               padding: const EdgeInsets.all(12),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 3,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 10,
+                childAspectRatio: 0.9,
               ),
               itemCount: photos.length,
               itemBuilder: (context, index) {
@@ -67,8 +68,13 @@ class GalleryScreen extends StatelessWidget {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(10),
                     child: Container(
-                      color: Color.fromARGB(255, 212, 213, 213),
-                      child: Image.file(photos[index], fit: BoxFit.contain),
+                      color: const Color.fromARGB(255, 212, 213, 213),
+                      padding: const EdgeInsets.all(6), // reduces empty edges
+                      child: AspectRatio(
+                        aspectRatio:
+                            1, // square preview (try 4 / 3 if you want taller)
+                        child: Image.file(photos[index], fit: BoxFit.contain),
+                      ),
                     ),
                   ),
                 );

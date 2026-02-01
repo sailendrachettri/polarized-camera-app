@@ -1,15 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:media_store_plus/media_store_plus.dart';
 import 'screens/camera_screen.dart';
 
 late List<CameraDescription> cameras;
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
   try {
+    WidgetsFlutterBinding.ensureInitialized();
+    
+    // ✅ Set app folder BEFORE initializing
+    MediaStore.appFolder = "PolarizedCamera";
+    
+    // ✅ Then initialize
+    await MediaStore.ensureInitialized();
+    
     cameras = await availableCameras();
   } catch (e) {
-    debugPrint('Error getting cameras: $e');
+    debugPrint('Error initializing app: $e');
     cameras = [];
   }
   runApp(const MyApp());
@@ -21,11 +29,11 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      title: 'Polarized Camera',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        brightness: Brightness.dark,
-        primarySwatch: Colors.blue,
-        scaffoldBackgroundColor: Colors.black,
+        primarySwatch: Colors.grey,
+        scaffoldBackgroundColor: const Color(0xFFD5D5D5),
       ),
       home: const CameraScreen(),
     );
