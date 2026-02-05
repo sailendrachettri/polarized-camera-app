@@ -5,6 +5,7 @@ class PolarizationEffect {
   static Future<File> applyEffect(
     File inputFile, {
     double intensity = 0.7,
+    double mood = 0.35,
   }) async {
     final bytes = await inputFile.readAsBytes();
     img.Image? image = img.decodeImage(bytes);
@@ -14,30 +15,56 @@ class PolarizationEffect {
     for (int y = 0; y < image.height; y++) {
       for (int x = 0; x < image.width; x++) {
         final pixel = image.getPixel(x, y);
-        int r = pixel.r.toInt();
-        int g = pixel.g.toInt();
-        int b = pixel.b.toInt();
 
-        // Contrast boost
-        r = (((r - 128) * (1 + intensity)) + 128).clamp(0, 255).toInt();
-        g = (((g - 128) * (1 + intensity)) + 128).clamp(0, 255).toInt();
-        b = (((b - 128) * (1 + intensity)) + 128).clamp(0, 255).toInt();
+        // ---- read as double ----
+        double r = pixel.r.toDouble();
+        double g = pixel.g.toDouble();
+        double b = pixel.b.toDouble();
 
-        // Blue enhancement (sky/water)
-        b = (b * (1 + intensity * 0.6)).clamp(0, 255).toInt();
+        // ---- contrast boost ----
+        r = ((r - 128.0) * (1.0 + intensity)) + 128.0;
+        g = ((g - 128.0) * (1.0 + intensity)) + 128.0;
+        b = ((b - 128.0) * (1.0 + intensity)) + 128.0;
 
-        // Highlight suppression (glare reduction)
-        final brightness = (r + g + b) / 3;
-        if (brightness > 200) {
-          r = (r * (1 - intensity * 0.4)).toInt();
-          g = (g * (1 - intensity * 0.4)).toInt();
-          b = (b * (1 - intensity * 0.4)).toInt();
+        // ---- blue enhancement ----
+        b = b * (1.0 + intensity * 0.6);
+
+        // ---- highlight suppression ----
+        final double brightness = (r + g + b) / 3.0;
+        if (brightness > 200.0) {
+          final double glare = 1.0 - intensity * 0.4;
+          r = r * glare;
+          g = g * glare;
+          b = b * glare;
         }
 
+        // ===============================
+        // 🎞 MOODY / SEMI B&W LOOK
+        // ===============================
+        final double gray = 0.299 * r + 0.587 * g + 0.114 * b;
+        final double desat = mood * 0.7;
+
+        r = r * (1.0 - desat) + gray * desat;
+        g = g * (1.0 - desat) + gray * desat;
+        b = b * (1.0 - desat) + gray * desat;
+
+        // ---- darken exposure ----
+        final double exposure = 1.0 - mood * 0.25;
+        r = r * exposure;
+        g = g * exposure;
+        b = b * exposure;
+
+        // ---- deeper blacks ----
+        final double contrast = 1.0 + mood * 0.6;
+        r = ((r - 128.0) * contrast) + 128.0;
+        g = ((g - 128.0) * contrast) + 128.0;
+        b = ((b - 128.0) * contrast) + 128.0;
+
+        // ---- write as int once ----
         pixel
-          ..r = r
-          ..g = g
-          ..b = b;
+          ..r = r.clamp(0.0, 255.0).toInt()
+          ..g = g.clamp(0.0, 255.0).toInt()
+          ..b = b.clamp(0.0, 255.0).toInt();
       }
     }
 
@@ -75,7 +102,7 @@ class PolarizationEffect {
     // Light outer margin background frame color
     img.fill(
       framedImage,
-      color: img.ColorRgb8(212, 213, 213), // very light gray 
+      color: img.ColorRgb8(212, 213, 213), // very light gray
     );
 
     // Fill the frame area with white

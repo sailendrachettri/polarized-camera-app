@@ -1,4 +1,4 @@
-package com.example.polarized_camera
+package com.neo.polar.cam.release
 
 import io.flutter.embedding.android.FlutterActivity
 

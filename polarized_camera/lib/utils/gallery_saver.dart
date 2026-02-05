@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'package:path_provider/path_provider.dart';
 import 'package:media_store_plus/media_store_plus.dart';
 
 class GallerySaver {

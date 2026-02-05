@@ -8,6 +8,7 @@ late List<CameraDescription> cameras;
 Future<void> main() async {
   try {
     WidgetsFlutterBinding.ensureInitialized();
+    cameras = await availableCameras();
     
     // ✅ Set app folder BEFORE initializing
     MediaStore.appFolder = "PolarizedCamera";
@@ -15,7 +16,6 @@ Future<void> main() async {
     // ✅ Then initialize
     await MediaStore.ensureInitialized();
     
-    cameras = await availableCameras();
   } catch (e) {
     debugPrint('Error initializing app: $e');
     cameras = [];

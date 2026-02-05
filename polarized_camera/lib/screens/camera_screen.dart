@@ -1,18 +1,16 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:path/path.dart' as path;
 import 'package:audioplayers/audioplayers.dart';
 import '../main.dart';
 import '../utils/polarization_effect.dart';
 import 'gallery_screen.dart';
-import 'full_preview_screen.dart';
-import 'dart:io';
-import 'package:media_store_plus/media_store_plus.dart';
 import '../utils/gallery_saver.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:flutter/services.dart';
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -26,6 +24,8 @@ class _CameraScreenState extends State<CameraScreen>
   CameraController? _controller;
   bool _initialized = false;
   bool _capturing = false;
+  bool _permissionDenied = false;
+  String _errorMessage = '';
   CameraLensDirection _currentLens = CameraLensDirection.back;
   final List<File> _photos = [];
   late AnimationController _shutterAnimController;
@@ -39,14 +39,17 @@ class _CameraScreenState extends State<CameraScreen>
   @override
   void initState() {
     super.initState();
+
     _shutterAnimController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 150),
     );
+
     _processingAnimController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat();
+
     _flashAnimController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 200),
@@ -63,30 +66,125 @@ class _CameraScreenState extends State<CameraScreen>
       ),
     );
 
-    _requestPermissions();
-    _loadExistingPhotos();
-    _initCamera();
+    _startup();
+  }
+
+  Future<void> _startup() async {
+    try {
+      final granted = await _requestPermissions();
+      if (!granted) {
+        if (mounted) {
+          setState(() {
+            _permissionDenied = true;
+            _errorMessage =
+                'Camera and storage permissions are required to use this app';
+          });
+        }
+        return;
+      }
+
+      await _loadExistingPhotos();
+
+      // Small delay lets Android fully apply permission
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      await _initCamera();
+    } catch (e) {
+      debugPrint('Startup error: $e');
+      if (mounted) {
+        setState(() {
+          _permissionDenied = true;
+          _errorMessage = 'Initialization failed: $e';
+        });
+      }
+    }
+  }
+
+  void _showPermissionSettings() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Permission Required'),
+        content: const Text(
+          'Camera and storage permissions are required. '
+          'Please enable them in app settings.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _permissionDenied = false;
+            },
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              openAppSettings();
+              _permissionDenied = false;
+              Navigator.pop(context);
+            },
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    );
   }
 
   bool cameraCaptureSoundEnable = false;
   bool printingPolarizedImageSound = false;
 
-  /// ✅ Request storage permissions
-  Future<void> _requestPermissions() async {
-    if (Platform.isAndroid) {
-      final status = await Permission.photos.request();
+  Future<bool> _requestPermissions() async {
+    // Check current camera permission status
+    final cameraStatus = await Permission.camera.status;
 
-      if (!status.isGranted) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Storage permission is required to save photos'),
-              duration: Duration(seconds: 3),
-            ),
-          );
-        }
+    PermissionStatus finalCameraStatus;
+
+    // Only request if not already granted
+    if (cameraStatus.isGranted) {
+      finalCameraStatus = cameraStatus;
+    } else if (cameraStatus.isPermanentlyDenied) {
+      if (mounted) {
+        _showPermissionSettings();
+      }
+      return false;
+    } else {
+      // Request permission (will show system dialog)
+      finalCameraStatus = await Permission.camera.request();
+    }
+
+    if (finalCameraStatus.isPermanentlyDenied) {
+      if (mounted) {
+        _showPermissionSettings();
+      }
+      return false;
+    }
+
+    if (finalCameraStatus.isDenied) {
+      if (mounted) {
+        setState(() {
+          _permissionDenied = true;
+          _errorMessage = 'Camera permission is required to use this app';
+        });
+      }
+      return false;
+    }
+
+    if (Platform.isAndroid) {
+      final androidInfo = await DeviceInfoPlugin().androidInfo;
+
+      final Permission mediaPermission = androidInfo.version.sdkInt >= 33
+          ? Permission.photos
+          : Permission.storage;
+
+      final mediaStatus = await mediaPermission.status;
+
+      if (!mediaStatus.isGranted) {
+        final result = await mediaPermission.request();
+        if (!result.isGranted) return false;
       }
     }
+
+    return true;
   }
 
   /// Get camera safely by lens direction
@@ -114,7 +212,7 @@ class _CameraScreenState extends State<CameraScreen>
     try {
       await _controller?.dispose();
 
-      final preset = ResolutionPreset.high;
+      final preset = ResolutionPreset.veryHigh;
 
       _controller = CameraController(
         camera,
@@ -347,11 +445,12 @@ class _CameraScreenState extends State<CameraScreen>
 
       // Copy camera image to temp directory
       final File rawImage = await File(picture.path).copy(tempPath);
-
+  
       // Apply effect (MODIFIES the same file)
       final File polarizedImage = await PolarizationEffect.applyEffect(
         rawImage,
-        intensity: 0.7,
+        intensity: 0.1,
+        mood: 0.1,
       );
 
       if (!mounted) return;
@@ -412,6 +511,49 @@ class _CameraScreenState extends State<CameraScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Show error screen if permissions denied
+    if (_permissionDenied) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFD5D5D5),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, size: 80, color: Colors.red),
+                const SizedBox(height: 24),
+                Text(
+                  _errorMessage,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    color: Color(0xFF2A2A2A),
+                  ),
+                ),
+                const SizedBox(height: 32),
+                ElevatedButton(
+                  onPressed: () async {
+                    final status = await Permission.camera.status;
+
+                    if (status.isPermanentlyDenied) {
+                      openAppSettings(); // user chose this
+                    } else {
+                      setState(() {
+                        _permissionDenied = false;
+                      });
+                      _startup(); // retry permission
+                    }
+                  },
+                  child: const Text('Grant Permission'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     if (!_initialized || _controller == null) {
       return const Scaffold(
         backgroundColor: Color(0xFFD5D5D5),
@@ -467,7 +609,7 @@ class _CameraScreenState extends State<CameraScreen>
                       child: Text(
                         'NeoPolar Cam',
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.3),
+                          color: Colors.white.withOpacity(0.7),
                           fontSize: 16,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 2,
@@ -479,6 +621,7 @@ class _CameraScreenState extends State<CameraScreen>
               ),
 
               const SizedBox(height: 40),
+              //
 
               // Camera viewfinder with thick frame
               Center(

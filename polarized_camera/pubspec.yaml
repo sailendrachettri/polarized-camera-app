@@ -1,5 +1,5 @@
-name: polarized_camera
-description: "A new Flutter project."
+name: NeoPolarCam
+description: "Polarized camera"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -30,6 +30,24 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+
+  camera: ^0.10.5+9
+  image: ^4.1.3
+  path_provider: ^2.1.2
+  path: ^1.9.0
+  audioplayers: ^5.2.1
+  media_store_plus: ^0.1.3
+  permission_handler: ^11.0.1
+  flutter_launcher_icons: ^0.13.1
+  device_info_plus: ^10.1.0
+
+flutter_icons:
+  android: true
+  ios: false
+  image_path: "assets/icons/icon.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icons/icon.png"
+
   
 
   # The following adds the Cupertino Icons font to your application.
@@ -39,13 +57,6 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  camera: ^0.10.5+9
-  image: ^4.1.3
-  path_provider: ^2.1.2
-  path: ^1.9.0
-  audioplayers: ^5.2.1
-  media_store_plus: ^0.1.3
-  permission_handler: ^11.0.1
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
   # activated in the `analysis_options.yaml` file located at the root of your
